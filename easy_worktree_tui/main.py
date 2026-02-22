@@ -1,3 +1,4 @@
+from textual import work
 from textual.app import App, ComposeResult
 from textual.widgets import Header, Footer, ListView, ListItem, Label, Static, Input, Button
 from textual.containers import Horizontal, Vertical, ScrollableContainer
@@ -121,6 +122,8 @@ class EasyWorktree(App):
         Binding("a", "add_worktree", "Add WT", show=True),
         Binding("r", "remove_worktree", "Remove WT", show=True),
         Binding("R", "refresh", "Refresh", show=True),
+        Binding("j", "cursor_down", "Down", show=False),
+        Binding("k", "cursor_up", "Up", show=False),
     ]
 
     selected_path = reactive("")
@@ -138,9 +141,11 @@ class EasyWorktree(App):
         yield Footer()
 
     def on_mount(self) -> None:
+        self.query_one("#worktree-list", ListView).focus()
         self.refresh_list()
         self.set_interval(2, self.refresh_list)
 
+    @work(exclusive=True, thread=True)
     def refresh_list(self) -> None:
         try:
             # wt list の結果を取得
@@ -196,23 +201,39 @@ class EasyWorktree(App):
                 
                 worktrees.append((name, branch, path, status))
 
-            list_view = self.query_one("#worktree-list", ListView)
-            current_index = list_view.index
-            
-            # Clear and rebuild
-            list_view.clear()
-            for name, branch, path, status in worktrees:
-                list_view.append(WorktreeListItem(name, branch, path, status))
-            
-            if current_index is not None and current_index < len(worktrees):
-                list_view.index = current_index
-            elif worktrees and list_view.index is None:
-                list_view.index = 0
+            # UI Update on main thread
+            self.call_from_thread(self.update_list_ui, worktrees)
 
         except subprocess.CalledProcessError as e:
-            self.notify(f"wt list failed: {e.stderr}", severity="error")
+            self.app.call_from_thread(self.notify, f"wt list failed: {e.stderr}", severity="error")
         except Exception as e:
-            self.notify(f"Refresh error: {str(e)}", severity="error")
+            self.app.call_from_thread(self.notify, f"Refresh error: {str(e)}", severity="error")
+
+    def update_list_ui(self, worktrees: list) -> None:
+        list_view = self.query_one("#worktree-list", ListView)
+        
+        # Save current selection
+        selected_wt = None
+        if list_view.highlighted_child:
+            selected_wt = getattr(list_view.highlighted_child, "wt_name", None)
+            
+        # Clear and rebuild
+        list_view.clear()
+        new_index = 0
+        for i, (name, branch, path, status) in enumerate(worktrees):
+            item = WorktreeListItem(name, branch, path, status)
+            list_view.append(item)
+            if name == selected_wt:
+                new_index = i
+        
+        # Restore selection
+        if worktrees:
+            list_view.index = new_index
+            
+        # Ensure ListView maintains focus if it was focused
+        # If no widget is focused, we force focus back to the list
+        if not self.focused:
+            list_view.focus()
 
     def on_list_view_highlighted(self, event: ListView.Highlighted) -> None:
         if event.item and hasattr(event.item, 'path'):
@@ -239,7 +260,12 @@ class EasyWorktree(App):
 
     def action_refresh(self) -> None:
         self.refresh_list()
-        self.update_diff()
+
+    def action_cursor_down(self) -> None:
+        self.query_one("#worktree-list", ListView).action_cursor_down()
+
+    def action_cursor_up(self) -> None:
+        self.query_one("#worktree-list", ListView).action_cursor_up()
 
     def action_help(self) -> None:
         self.notify("Worktree 管理 TUI\n\na: Add WT\nr: Remove WT\nR: Refresh\nq: Quit", title="Help")
