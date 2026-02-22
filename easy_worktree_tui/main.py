@@ -9,6 +9,9 @@ import subprocess
 import os
 from pathlib import Path
 
+import sys
+from importlib.metadata import version as get_version
+
 class AddWorktreeModal(ModalScreen[str]):
     def compose(self) -> ComposeResult:
         with Vertical(id="modal-content"):
@@ -29,13 +32,13 @@ class AddWorktreeModal(ModalScreen[str]):
             self.dismiss("")
 
 class ConfirmRemoveModal(ModalScreen[bool]):
-    def __init__(self, name: str):
+    def __init__(self, wt_name: str):
         super().__init__()
-        self.name = name
+        self.wt_name = wt_name
 
     def compose(self) -> ComposeResult:
         with Vertical(id="modal-content"):
-            yield Label(f"Remove worktree '{self.name}'?", id="modal-title")
+            yield Label(f"Remove worktree '{self.wt_name}'?", id="modal-title")
             with Horizontal(id="modal-buttons"):
                 yield Button("Cancel", id="cancel")
                 yield Button("Remove", variant="error", id="remove")
@@ -46,7 +49,7 @@ class ConfirmRemoveModal(ModalScreen[bool]):
 class WorktreeListItem(ListItem):
     def __init__(self, name: str, branch: str, path: str, status: str):
         super().__init__()
-        self.name = name
+        self.wt_name = name
         self.branch = branch
         self.path = path
         self.status = status
@@ -54,6 +57,12 @@ class WorktreeListItem(ListItem):
 
     def compose(self) -> ComposeResult:
         yield self.label
+
+import re
+
+def strip_ansi(text: str) -> str:
+    ansi_escape = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
+    return ansi_escape.sub('', text)
 
 class EasyWorktreeApp(App):
     CSS = """
@@ -142,7 +151,7 @@ class EasyWorktreeApp(App):
         try:
             # wt list の結果を取得
             result = subprocess.run(["wt", "list"], capture_output=True, text=True, check=True)
-            output = result.stdout.strip()
+            output = strip_ansi(result.stdout.strip())
             if not output:
                 return
 
@@ -174,15 +183,21 @@ class EasyWorktreeApp(App):
                 
                 # The path retrieval is the most reliable way to confirm it exists
                 path_result = subprocess.run(["wt", "co", name], capture_output=True, text=True)
-                path = path_result.stdout.strip()
+                raw_path = path_result.stdout.strip()
                 
-                if not path:
+                if not raw_path:
                     continue
 
+                # Ensure path is absolute
+                path = str(Path(raw_path).absolute())
+                
+                if not os.path.exists(path):
+                    # Try relative to the current working directory as fallback
+                    path = str(Path(os.getcwd()) / raw_path)
+                    if not os.path.exists(path):
+                        continue
+
                 # status (changes) is often at the end, but let's just grab what's left
-                # Typically: Name Branch Created LastCommit Changes
-                # We can't easily parse columns by index if values have spaces or are missing.
-                # For now, let's just show what we have.
                 status = " ".join(parts[2:])
                 
                 worktrees.append((name, branch, path, status))
@@ -206,7 +221,7 @@ class EasyWorktreeApp(App):
             self.notify(f"Refresh error: {str(e)}", severity="error")
 
     def on_list_view_highlighted(self, event: ListView.Highlighted) -> None:
-        if event.item:
+        if event.item and hasattr(event.item, 'path'):
             self.selected_path = event.item.path
             self.update_diff()
 
@@ -256,15 +271,21 @@ class EasyWorktreeApp(App):
             def handle_remove(confirmed: bool):
                 if confirmed:
                     try:
-                        subprocess.run(["wt", "rm", item.name], check=True)
-                        self.notify(f"Removed worktree: {item.name}")
+                        subprocess.run(["wt", "rm", item.wt_name], check=True)
+                        self.notify(f"Removed worktree: {item.wt_name}")
                         self.refresh_list()
                     except subprocess.CalledProcessError as e:
                         self.notify(f"Failed to remove: {e}", severity="error")
 
-            self.push_screen(ConfirmRemoveModal(item.name), handle_remove)
+            self.push_screen(ConfirmRemoveModal(item.wt_name), handle_remove)
 
 def main():
+    if "--version" in sys.argv or "-v" in sys.argv:
+        try:
+            print(f"easy-worktree-tui version {get_version('easy-worktree-tui')}")
+        except Exception:
+            print("easy-worktree-tui version unknown")
+        return
     app = EasyWorktreeApp()
     app.run()
 
