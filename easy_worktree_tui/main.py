@@ -1,6 +1,6 @@
 from textual import work
 from textual.app import App, ComposeResult
-from textual.widgets import Header, Footer, ListView, ListItem, Label, Static, Input, Button, Tree, TextArea
+from textual.widgets import Header, Footer, ListView, ListItem, Label, Static, Input, Button, Tree, RichLog
 from textual.containers import Horizontal, Vertical, ScrollableContainer
 from textual.binding import Binding
 from textual.reactive import reactive
@@ -54,7 +54,7 @@ class WorktreeListItem(ListItem):
         self.branch = branch
         self.path = path
         self.status = status
-        self.label = Label(f"{name:<15} {branch:<15} {status}")
+        self.label = Label(f"{branch}")
 
     def compose(self) -> ComposeResult:
         yield self.label
@@ -71,13 +71,13 @@ class EasyWorktree(App):
         background: $surface;
     }
     #side-menu {
-        width: 30;
+        width: 20;
         height: 100%;
         border-right: tall #333333;
         background: $surface;
     }
     #file-tree-container {
-        width: 30;
+        width: 25;
         height: 100%;
         border-right: tall #333333;
         background: $surface;
@@ -103,6 +103,7 @@ class EasyWorktree(App):
     #file-tree {
         height: 100%;
         background: $surface;
+        guide-depth: 2;
     }
     #file-tree:focus > .tree--cursor {
         background: $primary;
@@ -159,9 +160,10 @@ class EasyWorktree(App):
     selected_path = reactive("")
     selected_file = reactive("")
 
-    def __init__(self, git_dir: str | None = None, **kwargs):
+    def __init__(self, git_dir: str | None = None, target_worktree: str | None = None, **kwargs):
         super().__init__(**kwargs)
         self.git_dir = git_dir
+        self.target_worktree = target_worktree
         # --git-dir=xxx を wt コマンドの先頭に付けるプレフィックス
         self.wt_prefix = [f"--git-dir={git_dir}"] if git_dir else []
 
@@ -173,24 +175,41 @@ class EasyWorktree(App):
         title = f"🌳 {'[' + self.git_dir + ']' if self.git_dir else 'Easy Worktree'}"
         yield Header()
         with Horizontal():
-            with Vertical(id="side-menu"):
-                yield Label(title, id="menu-title")
-                yield ListView(id="worktree-list")
+            if not self.target_worktree:
+                with Vertical(id="side-menu"):
+                    yield Label(title, id="menu-title")
+                    yield ListView(id="worktree-list")
             with Vertical(id="file-tree-container"):
                 yield Label("📁 Files", id="file-title")
                 yield Tree("Changes", id="file-tree")
             with Vertical(id="main-panel"):
                 yield Label("📄 Git Diff", id="diff-title")
-                yield TextArea(id="diff-view", read_only=True, language="diff")
+                yield RichLog(id="diff-view", highlight=True, markup=True)
         yield Footer()
 
     def on_mount(self) -> None:
-        self.query_one("#worktree-list", ListView).focus()
-        self.refresh_list()
-        self.set_interval(2, self.refresh_list)
+        if self.target_worktree:
+            self.query_one("#file-tree", Tree).focus()
+            
+            # Retrieve path for target_worktree
+            path_result = subprocess.run(self._wt("co", self.target_worktree), capture_output=True, text=True)
+            raw_path = path_result.stdout.strip()
+            if raw_path:
+                path = str(Path(raw_path).absolute())
+                if not os.path.exists(path):
+                    path = str(Path(os.getcwd()) / raw_path)
+                self.selected_path = path
+                self.update_file_tree()
+                self.update_diff()
+        else:
+            self.query_one("#worktree-list", ListView).focus()
+            self.refresh_list()
+            self.set_interval(2, self.refresh_list)
 
     @work(exclusive=True, thread=True)
     def refresh_list(self) -> None:
+        if self.target_worktree:
+            return
         try:
             # wt list の結果を取得
             result = subprocess.run(self._wt("list"), capture_output=True, text=True, check=True)
@@ -408,30 +427,37 @@ class EasyWorktree(App):
                 )
                 diff_content = diff_result.stdout or "No changes."
 
-            diff_view = self.query_one("#diff-view", TextArea)
-            diff_view.text = diff_content
+            diff_view = self.query_one("#diff-view", RichLog)
+            diff_view.clear()
+            diff_view.write(Syntax(diff_content, "diff", theme="monokai", line_numbers=True))
         except Exception as e:
-            self.query_one("#diff-view", TextArea).text = f"Error: {e}"
+            diff_view = self.query_one("#diff-view", RichLog)
+            diff_view.clear()
+            diff_view.write(f"Error: {e}")
 
     def action_switch_focus_forward(self) -> None:
-        panes = [
-            self.query_one("#worktree-list"),
+        panes = []
+        if not self.target_worktree:
+            panes.append(self.query_one("#worktree-list"))
+        panes.extend([
             self.query_one("#file-tree"),
             self.query_one("#diff-view")
-        ]
+        ])
         active = self.focused
         if active in panes:
             idx = panes.index(active)
             panes[(idx + 1) % len(panes)].focus()
         else:
-            panes[1].focus() # Focus file tree by default if we tab from elsewhere
+            panes[0].focus() # Focus file tree by default if we tab from elsewhere
 
     def action_switch_focus_backward(self) -> None:
-        panes = [
-            self.query_one("#worktree-list"),
+        panes = []
+        if not self.target_worktree:
+            panes.append(self.query_one("#worktree-list"))
+        panes.extend([
             self.query_one("#file-tree"),
             self.query_one("#diff-view")
-        ]
+        ])
         active = self.focused
         if active in panes:
             idx = panes.index(active)
@@ -440,13 +466,16 @@ class EasyWorktree(App):
             panes[0].focus()
 
     def action_refresh(self) -> None:
-        self.refresh_list()
+        if not self.target_worktree:
+            self.refresh_list()
 
     def action_cursor_down(self) -> None:
-        self.query_one("#worktree-list", ListView).action_cursor_down()
+        if not self.target_worktree:
+            self.query_one("#worktree-list", ListView).action_cursor_down()
 
     def action_cursor_up(self) -> None:
-        self.query_one("#worktree-list", ListView).action_cursor_up()
+        if not self.target_worktree:
+            self.query_one("#worktree-list", ListView).action_cursor_up()
 
     def action_help(self) -> None:
         self.notify("Worktree 管理 TUI\n\na: Add WT\nr: Remove WT\nR: Refresh\nq: Quit", title="Help")
@@ -492,14 +521,17 @@ def main():
 
     # --git-dir=xxx 形式を探してアプリに渡す
     git_dir = None
+    target_worktree = None
     remaining = []
     for arg in args:
         if arg.startswith("--git-dir="):
             git_dir = arg[len("--git-dir="):]
+        elif not arg.startswith("-"):
+            target_worktree = arg
         else:
             remaining.append(arg)
 
-    app = EasyWorktree(git_dir=git_dir)
+    app = EasyWorktree(git_dir=git_dir, target_worktree=target_worktree)
     app.run()
 
 if __name__ == "__main__":
