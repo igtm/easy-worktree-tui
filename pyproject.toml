@@ -1,6 +1,6 @@
 [project]
 name = "easy-worktree-tui"
-version = "0.0.7"
+version = "0.0.8"
 description = "TUI for easy-worktree"
 readme = "README.md"
 requires-python = ">=3.10"
