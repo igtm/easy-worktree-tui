@@ -114,6 +114,17 @@ class EasyWorktree(App):
     #modal-buttons Button {
         margin: 0 1;
     }
+    #worktree-list:focus > ListItem.--highlight {
+        background: $primary;
+        color: $text;
+    }
+    #worktree-list > ListItem.--highlight {
+        background: $primary-darken-2;
+        color: $text-muted;
+    }
+    #worktree-list > ListItem:hover {
+        background: $boost;
+    }
     """
 
     BINDINGS = [
@@ -128,11 +139,22 @@ class EasyWorktree(App):
 
     selected_path = reactive("")
 
+    def __init__(self, git_dir: str | None = None, **kwargs):
+        super().__init__(**kwargs)
+        self.git_dir = git_dir
+        # --git-dir=xxx を wt コマンドの先頭に付けるプレフィックス
+        self.wt_prefix = [f"--git-dir={git_dir}"] if git_dir else []
+
+    def _wt(self, *args) -> list[str]:
+        """wt コマンドを git_dir オプション付きで作成する"""
+        return ["wt"] + self.wt_prefix + list(args)
+
     def compose(self) -> ComposeResult:
+        title = f"🌳 Easy Worktree{' [' + self.git_dir + ']' if self.git_dir else ''}"
         yield Header()
         with Horizontal():
             with Vertical(id="side-menu"):
-                yield Label("🌳 Easy Worktree", id="menu-title")
+                yield Label(title, id="menu-title")
                 yield ListView(id="worktree-list")
             with Vertical(id="main-panel"):
                 yield Label("📄 Git Diff", id="diff-title")
@@ -149,7 +171,7 @@ class EasyWorktree(App):
     def refresh_list(self) -> None:
         try:
             # wt list の結果を取得
-            result = subprocess.run(["wt", "list"], capture_output=True, text=True, check=True)
+            result = subprocess.run(self._wt("list"), capture_output=True, text=True, check=True)
             output = strip_ansi(result.stdout.strip())
             if not output:
                 return
@@ -181,7 +203,7 @@ class EasyWorktree(App):
                 branch = parts[1] if len(parts) > 1 else "unknown"
                 
                 # The path retrieval is the most reliable way to confirm it exists
-                path_result = subprocess.run(["wt", "co", name], capture_output=True, text=True)
+                path_result = subprocess.run(self._wt("co", name), capture_output=True, text=True)
                 raw_path = path_result.stdout.strip()
                 
                 if not raw_path:
@@ -212,6 +234,16 @@ class EasyWorktree(App):
     def update_list_ui(self, worktrees: list) -> None:
         list_view = self.query_one("#worktree-list", ListView)
         
+        # Check if content actually changed to avoid flicker/highlight loss
+        current_wts = []
+        for child in list_view.children:
+            if hasattr(child, "wt_name"):
+                current_wts.append((child.wt_name, child.branch, child.path, child.status))
+        
+        if current_wts == worktrees:
+            # If no functional changes, don't clear and rebuild
+            return
+
         # Save current selection
         selected_wt = None
         if list_view.highlighted_child:
@@ -230,10 +262,9 @@ class EasyWorktree(App):
         if worktrees:
             list_view.index = new_index
             
-        # Ensure ListView maintains focus if it was focused
-        # If no widget is focused, we force focus back to the list
+        # Ensure focus is maintained
         if not self.focused:
-            list_view.focus()
+             list_view.focus()
 
     def on_list_view_highlighted(self, event: ListView.Highlighted) -> None:
         if event.item and hasattr(event.item, 'path'):
@@ -275,7 +306,7 @@ class EasyWorktree(App):
             if result:
                 try:
                     parts = result.split()
-                    cmd = ["wt", "add"] + parts
+                    cmd = self._wt("add", *parts)
                     subprocess.run(cmd, check=True)
                     self.notify(f"Added worktree: {parts[0]}")
                     self.refresh_list()
@@ -291,7 +322,7 @@ class EasyWorktree(App):
             def handle_remove(confirmed: bool):
                 if confirmed:
                     try:
-                        subprocess.run(["wt", "rm", item.wt_name], check=True)
+                        subprocess.run(self._wt("rm", item.wt_name), check=True)
                         self.notify(f"Removed worktree: {item.wt_name}")
                         self.refresh_list()
                     except subprocess.CalledProcessError as e:
@@ -300,13 +331,25 @@ class EasyWorktree(App):
             self.push_screen(ConfirmRemoveModal(item.wt_name), handle_remove)
 
 def main():
-    if "--version" in sys.argv or "-v" in sys.argv:
+    args = sys.argv[1:]
+
+    if "--version" in args or "-v" in args:
         try:
             print(f"easy-worktree-tui version {get_version('easy-worktree-tui')}")
         except Exception:
             print("easy-worktree-tui version unknown")
         return
-    app = EasyWorktree()
+
+    # --git-dir=xxx 形式を探してアプリに渡す
+    git_dir = None
+    remaining = []
+    for arg in args:
+        if arg.startswith("--git-dir="):
+            git_dir = arg[len("--git-dir="):]
+        else:
+            remaining.append(arg)
+
+    app = EasyWorktree(git_dir=git_dir)
     app.run()
 
 if __name__ == "__main__":
