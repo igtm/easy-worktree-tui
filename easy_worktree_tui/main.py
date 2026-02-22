@@ -1,6 +1,6 @@
 from textual import work
 from textual.app import App, ComposeResult
-from textual.widgets import Header, Footer, ListView, ListItem, Label, Static, Input, Button, Tree
+from textual.widgets import Header, Footer, ListView, ListItem, Label, Static, Input, Button, Tree, TextArea
 from textual.containers import Horizontal, Vertical, ScrollableContainer
 from textual.binding import Binding
 from textual.reactive import reactive
@@ -87,7 +87,7 @@ class EasyWorktree(App):
         height: 100%;
         padding: 0;
     }
-    #diff-container {
+    #diff-view {
         height: 100%;
         border-top: solid #333333;
         background: $boost;
@@ -181,8 +181,7 @@ class EasyWorktree(App):
                 yield Tree("Changes", id="file-tree")
             with Vertical(id="main-panel"):
                 yield Label("📄 Git Diff", id="diff-title")
-                with ScrollableContainer(id="diff-container"):
-                    yield Static(id="diff-view", expand=True)
+                yield TextArea(id="diff-view", read_only=True, language="diff")
         yield Footer()
 
     def on_mount(self) -> None:
@@ -409,17 +408,16 @@ class EasyWorktree(App):
                 )
                 diff_content = diff_result.stdout or "No changes."
 
-            syntax = Syntax(diff_content, "diff", theme="monokai", line_numbers=True)
-            diff_view = self.query_one("#diff-view", Static)
-            diff_view.update(syntax)
+            diff_view = self.query_one("#diff-view", TextArea)
+            diff_view.text = diff_content
         except Exception as e:
-            self.query_one("#diff-view", Static).update(f"Error: {e}")
+            self.query_one("#diff-view", TextArea).text = f"Error: {e}"
 
     def action_switch_focus_forward(self) -> None:
         panes = [
             self.query_one("#worktree-list"),
             self.query_one("#file-tree"),
-            self.query_one("#diff-container")
+            self.query_one("#diff-view")
         ]
         active = self.focused
         if active in panes:
@@ -432,7 +430,7 @@ class EasyWorktree(App):
         panes = [
             self.query_one("#worktree-list"),
             self.query_one("#file-tree"),
-            self.query_one("#diff-container")
+            self.query_one("#diff-view")
         ]
         active = self.focused
         if active in panes:
