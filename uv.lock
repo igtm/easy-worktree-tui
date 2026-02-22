@@ -16,7 +16,7 @@ wheels = [
 
 [[package]]
 name = "easy-worktree-tui"
-version = "0.0.4"
+version = "0.0.5"
 source = { editable = "." }
 dependencies = [
     { name = "easy-worktree" },

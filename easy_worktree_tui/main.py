@@ -64,7 +64,7 @@ def strip_ansi(text: str) -> str:
     ansi_escape = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
     return ansi_escape.sub('', text)
 
-class EasyWorktreeApp(App):
+class EasyWorktree(App):
     CSS = """
     Screen {
         background: $surface;
@@ -72,7 +72,7 @@ class EasyWorktreeApp(App):
     #side-menu {
         width: 45;
         height: 100%;
-        border-right: tall $accent;
+        border-right: tall #333333;
         background: $surface;
     }
     #main-panel {
@@ -81,22 +81,16 @@ class EasyWorktreeApp(App):
     }
     #diff-container {
         height: 100%;
-        border: solid $primary;
+        border-top: solid #333333;
         background: $boost;
     }
-    #menu-title {
-        background: $accent;
-        color: $text;
-        text-align: center;
+    #menu-title, #diff-title {
+        background: #2a2a2a;
+        color: #888888;
+        padding: 0 1;
+        height: 1;
         text-style: bold;
-        padding: 1;
-    }
-    #diff-title {
-        background: $primary;
-        color: $text;
-        text-align: center;
-        text-style: bold;
-        padding: 1;
+        width: 100%;
     }
     #modal-content {
         width: 60;
@@ -286,7 +280,7 @@ def main():
         except Exception:
             print("easy-worktree-tui version unknown")
         return
-    app = EasyWorktreeApp()
+    app = EasyWorktree()
     app.run()
 
 if __name__ == "__main__":
