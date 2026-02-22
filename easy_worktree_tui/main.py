@@ -140,37 +140,70 @@ class EasyWorktreeApp(App):
 
     def refresh_list(self) -> None:
         try:
+            # wt list の結果を取得
             result = subprocess.run(["wt", "list"], capture_output=True, text=True, check=True)
-            lines = result.stdout.strip().split("\n")
+            output = result.stdout.strip()
+            if not output:
+                return
+
+            lines = output.splitlines()
             
-            if len(lines) < 3:
+            # Find the header separator line (---)
+            separator_index = -1
+            for i, line in enumerate(lines):
+                if line.startswith("---") or "---" in line:
+                    separator_index = i
+                    break
+            
+            if separator_index == -1 or separator_index + 1 >= len(lines):
                 return
 
             worktrees = []
-            for line in lines[2:]:
+            # Start from the line after the separator
+            for line in lines[separator_index + 1:]:
                 parts = line.split()
                 if not parts:
                     continue
-                name = parts[0].strip("()")
-                branch = parts[1]
-                status = " ".join(parts[4:]) if len(parts) > 4 else ""
                 
+                # (main) -> main
+                raw_name = parts[0]
+                name = raw_name.strip("()")
+                
+                # branch is usually the second part
+                branch = parts[1] if len(parts) > 1 else "unknown"
+                
+                # The path retrieval is the most reliable way to confirm it exists
                 path_result = subprocess.run(["wt", "co", name], capture_output=True, text=True)
                 path = path_result.stdout.strip()
+                
+                if not path:
+                    continue
+
+                # status (changes) is often at the end, but let's just grab what's left
+                # Typically: Name Branch Created LastCommit Changes
+                # We can't easily parse columns by index if values have spaces or are missing.
+                # For now, let's just show what we have.
+                status = " ".join(parts[2:])
+                
                 worktrees.append((name, branch, path, status))
 
             list_view = self.query_one("#worktree-list", ListView)
             current_index = list_view.index
             
+            # Clear and rebuild
             list_view.clear()
             for name, branch, path, status in worktrees:
                 list_view.append(WorktreeListItem(name, branch, path, status))
             
             if current_index is not None and current_index < len(worktrees):
-                list_view.index = min(current_index, len(worktrees) - 1)
+                list_view.index = current_index
+            elif worktrees and list_view.index is None:
+                list_view.index = 0
 
-        except Exception:
-            pass
+        except subprocess.CalledProcessError as e:
+            self.notify(f"wt list failed: {e.stderr}", severity="error")
+        except Exception as e:
+            self.notify(f"Refresh error: {str(e)}", severity="error")
 
     def on_list_view_highlighted(self, event: ListView.Highlighted) -> None:
         if event.item:
